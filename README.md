@@ -1,2 +1,2 @@
-# This has the lit of R and python programs,  have worked on
+# This has the list of R and python programs, I have worked on
 
