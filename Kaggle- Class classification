@@ -1,0 +1,171 @@
+library(mlbench)
+library(caret)
+library(corrplot)
+library(xgboost)
+require(Matrix)
+require(data.table)
+if (!require('vcd')) install.packages('vcd')
+library(caTools)
+library(randomForest)
+library(pROC)
+
+df <- read.csv("/Users/aishwaryaramakrishnan/Desktop/BDAP/Machine Learning/glass.csv",header = TRUE)
+head(df)
+
+################# Corrplot
+
+M <- cor(df) 
+corrplot(M,method = 'circle')
+
+#################  Visualizing the data
+hist(df$RI,col = 'red')
+hist(df$Na,col = 'pink')
+hist(df$Mg,col = 'orange')   # Not normally distributed
+hist(df$Al,col = 'red')
+hist(df$Si,col = 'magenta')
+hist(df$K,col = 'blue')      #Highly skewed nd outliers
+
+scatter.smooth(df$K)
+
+hist(df$Ca,col = 'blue')
+hist(df$Ba,col = 'blue')  #Highly skewed
+hist(df$Fe,col = 'blue')  #Highly skewed
+  
+#################   XG Boost Feature Selection
+
+sparse_matrix <- sparse.model.matrix(Type~., data = df)
+bst <- xgboost(data = sparse_matrix, label = df$Type, max_depth = 4,
+               eta = 1, nthread = 2, nrounds = 10)
+importance <- xgb.importance(feature_names = colnames(sparse_matrix), model = bst)
+head(importance)
+xgb.plot.importance(importance_matrix = importance)
+
+################# Preprocessing
+
+df$Ba <- NULL
+df$Fe <- NULL
+df$K[df$K > 2] = mean(df$K)
+df$Type <- as.factor(df$Type)
+colnames(df)
+str(df)
+
+################# Test and train data set
+set.seed(101)
+g<-runif(nrow(df))
+df1<-df[order(g),]
+Y = df1[,8]
+ss <- sample.split(Y, SplitRatio = 3/4)
+train = df1[ss,1:8]  
+test = df1[!ss,1:8] 
+
+################# Logistic Regression
+
+train_control <- trainControl(method="cv", number=10,repeats = 2,savePredictions="final")
+
+fit_glmnet <- train (Type~.,train,
+                     method = "glmnet",tuneGrid = expand.grid(
+                       .alpha = 1,.lambda = 0.0002343928),
+                     metric="Mean_F1",
+                     preProc=c("center", "scale"),
+                     trControl = train_control)
+
+pred_glmnet <- predict(fit_glmnet, test)                           
+tbl <- table(pred = pred_glmnet, true = test$Type)
+accuracy <- sum(diag(tbl))/sum(tbl)
+accuracy
+
+################# Random Forest
+
+train_control <- trainControl(method="repeatedcv", number=10)
+fit_rf <- train (Type~. , train, method = "rf",tuneGrid = expand.grid(.mtry = 3),
+                     trControl = train_control)
+
+pred_rf <- predict(fit_rf, test)                           
+tbl1 <- table(pred = pred_rf, true = test$Type)
+accuracy1 <- sum(diag(tbl1))/sum(tbl1)
+accuracy1
+
+################# Neural Network
+
+train_control <- trainControl(method="repeatedcv", number=10)
+fit_nnet <- train(Type ~ ., train,
+                  method = "nnet",preProc=c("center", "scale"),
+                  tuneGrid = expand.grid(.size = 25,.decay = 0.003162278), trControl = train_control,
+                  MaxNWts = 50000,maxit = 200,trace = FALSE)
+
+pred_nnet <- predict(fit_nnet, test)                           
+tbl2 <- table(pred = pred_nnet, true = test$Type)
+accuracy2 <- sum(diag(tbl2))/sum(tbl2)
+accuracy2
+
+################# KNN
+
+train_control <- trainControl(method="repeatedcv", number=10)
+fit_knn <- train(Type ~ ., train, 
+                 method = "knn", 
+                 trControl = train_control, 
+                 preProc=c("center", "scale"), 
+                 tuneGrid= expand.grid(.k = 5))
+
+pred_knn <- predict(fit_knn, test)                           
+tbl3 <- table(pred = pred_knn, true = test$Type)
+accuracy3 <- sum(diag(tbl3))/sum(tbl3)
+accuracy3
+
+################# SVM
+
+fit_svmRadial <- train(Type ~ ., train, 
+                       method = "svmRadial", 
+                       trControl = train_control, 
+                       metric="Mean_F1",
+                       preProcess = c("center", "scale"), 
+                       tuneGrid = expand.grid(.sigma = 0.2769675, .C = 256))
+
+pred_svm <- predict(fit_svmRadial, test)                           
+tbl4 <- table(pred = pred_svm, true = test$Type)
+accuracy4 <- sum(diag(tbl4))/sum(tbl4)
+accuracy4
+
+################# XGBOOST
+
+train_control <- trainControl(method="repeatedcv", number=10)
+classifierXGBoost <- train(Type~., data = train, method = "xgbTree", trainContrl = train_control)
+pred_xgbm <- predict(classifierXGBoost, test)                           
+tbl5 <- table(pred = pred_xgbm, true = test$Type)
+accuracy5 <- sum(diag(tbl5))/sum(tbl5)
+accuracy5
+
+################# ROC Curve
+## Random Forest
+pred <- as.numeric(predict(fit_rf, df,type = 'raw'))
+roc.multi <- multiclass.roc(df$Type, pred)
+rs <- roc.multi[['rocs']]
+
+## Logistic Regression
+pred1 <- as.numeric(predict(fit_glmnet, df))
+roc.multi1 <- multiclass.roc(df$Type, as.numeric(predict(fit_glmnet, df)))
+rs1 <- roc.multi[['rocs']]
+
+
+## Neural Network
+pred2 <- as.numeric(predict(fit_nnet, df))
+roc.multi2 <- multiclass.roc(df$Type, as.numeric(predict(fit_nnet, df)))
+rs2 <- roc.multi[['rocs']]
+
+## KNN
+pred3 <- as.numeric(predict(fit_knn, df))
+roc.multi3 <- multiclass.roc(df$Type, as.numeric(predict(fit_knn, df)))
+rs3 <- roc.multi[['rocs']]
+
+## SVM
+pred4 <- as.numeric(predict(fit_svmRadial, df))
+roc.multi4 <- multiclass.roc(df$Type, as.numeric(predict(fit_svmRadial, df)))
+rs4 <- roc.multi[['rocs']]
+
+roc.multi$auc
+roc.multi1$auc
+roc.multi2$auc
+roc.multi3$auc
+roc.multi4$auc
+
+## Conclusion :  Random forest and Neural Network are the best models for this dataset
